@@ -263,12 +263,19 @@ class LinearDropoutAdd(torch.nn.Linear):
 
            # linear_out = fused_dense.fused_dense_function(input, self.weight, self.bias)
         if self.bias is None:
-            result = fused_dropout_add(linear_out, residual, self.p, is_training=self.training)
+            # re-enable torch grad to enable fused optimization.
+            with torch.enable_grad():
+                result = fused_dropout_add(linear_out, residual, self.p, is_training=self.training)
         else:
             if not self.fused_bias_fc:
-                result = fused_bias_dropout_add(linear_out, self.bias.expand_as(residual), residual, self.p, is_training=self.training)
+                # re-enable torch grad to enable fused optimization.
+                 with torch.enable_grad():
+                    result = fused_bias_dropout_add(linear_out, self.bias.expand_as(residual), residual, self.p, is_training=self.training)
             else:
-                result = fused_dropout_add(linear_out, residual, self.p, is_training=self.training)
+                # re-enable torch grad to enable fused optimization.
+                with torch.enable_grad():
+                    result = fused_dropout_add(linear_out, residual, self.p, is_training=self.training)
+
         return result
 
 class BertConfig(object):
@@ -443,7 +450,10 @@ class BertSelfOutput(nn.Module):
             hidden_states = self.dropout(hidden_states)
             hidden_states = hidden_states + input_tensor
         else:
-            hidden_states = fused_dropout_add(hidden_states, input_tensor, self.p, self.training)
+            # re-enable torch grad to enable fused optimization.
+            with torch.enable_grad():
+                hidden_states = fused_dropout_add(hidden_states, input_tensor, self.p, self.training)
+
         hidden_states = self.LayerNorm(hidden_states)
         return hidden_states
 
@@ -460,7 +470,10 @@ class FastBertAttention(nn.Module):
         residual=input_tensor
         multi_head_attention_output,_ = self.multi_head_attention(query = input_tensor, key = input_tensor, value = input_tensor, key_padding_mask=attention_mask, need_weights=True,attn_mask = None, is_training = self.training)
         if self.fused_dropout_add:
-            attention_output = fused_dropout_add(multi_head_attention_output, residual, self.p, self.training)
+            # re-enable torch grad to enable fused optimization.
+            with torch.enable_grad():
+                attention_output = fused_dropout_add(multi_head_attention_output, residual, self.p, self.training)
+
             attention_output = self.layer_norm(attention_output)
         else:
             attention_output = self.dropout(multi_head_attention_output)

@@ -14,6 +14,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+export NCCL_DEBUG=INFO
+export NCCL_SOCKET_IFNAME=eth0
+export NCCL_TOPO_FILE=/opt/msft/topo.xml
+export NCCL_IB_PCI_RELAXED_ORDERING=1
+export NCCL_NET_GDR_LEVEL=5
+
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+
+export UCX_IB_ENABLE_CUDA_AFFINITY=n
+export UCX_IB_PCI_RELAXED_ORDERING=on
+export UCX_NET_DEVICES=mlx5_0:1
+export UCX_TLS=rc
+
+## DL params
+export BATCHSIZE=8 #32
+export GRADIENT_STEPS=2
+export LR=3.5e-4
+export MAX_SAMPLES_TERMINATION=4500000
+export MAX_STEPS=200
+export OPT_LAMB_BETA_1=0.9
+export OPT_LAMB_BETA_2=0.999
+export START_WARMUP_STEP=0
+export WARMUP_PROPORTION=0.0
+
+
+# export EXTRA_PARAMS="--exchange_padding"
+export EXTRA_PARAMS="--dense_seq_output --exchange_padding"
+# export EXTRA_PARAMS="--dense_seq_output --unpad --exchange_padding"
+#export EXTRA_PARAMS="--dense_seq_output --unpad --unpad_fmha --exchange_padding" ## unpad_fmha requires A100
+export PHASE=2
+export EVAL_ITER_START_SAMPLES=150000
+export EVAL_ITER_SAMPLES=150000
+
+## System run parms
+export DGXNNODES=1
+export DGXSYSTEM=$(basename $(readlink -f ${BASH_SOURCE[0]}) | sed 's/^config_//' | sed 's/\.sh$//' )
+export WALLTIME=01:15:00
+
 set -e
 
 [ "${DEBUG}" = "1" ] && set -x
@@ -84,8 +123,8 @@ PHASE2="\
     --phase2 \
     --max_seq_length=512 \
     --max_predictions_per_seq=76 \
-    --input_dir=/workspace/data_phase2 \
-    --init_checkpoint=/workspace/phase1/model.ckpt-28252.pt \
+    --input_dir=/mlpbert/training/ \
+    --init_checkpoint=/mlpbert/phase1/bert_ckpt.pt \
     "
 PHASES=( "$PHASE1" "$PHASE2" )
 
@@ -109,15 +148,17 @@ else
   # Mode 2: Single-node Docker; need to launch tasks with Pytorch's distributed launch
   # TODO: use bind.sh instead of bind_launch.py
   #       torch.distributed.launch only accepts Python programs (not bash scripts) to exec
-  CMD=( 'python' '-u' '-m' 'bind_pyt' "--nsockets_per_node=${DGXNSOCKET}" \
-    "--ncores_per_socket=${DGXSOCKETCORES}" "--nproc_per_node=${DGXNGPU}" )
+  # CMD=( 'python' '-u' '-m' 'bind_pyt' "--nsockets_per_node=${DGXNSOCKET}" \
+  #   "--ncores_per_socket=${DGXSOCKETCORES}" "--nproc_per_node=${DGXNGPU}" )
+  CMD=( 'python -u -m torch.distributed.launch --nproc_per_node=8 ' )
+
 fi
 
 # Run fixed number of training samples
 BERT_CMD="\
     ${CMD[@]} \
     ${NSYSCMD} \
-    /workspace/bert/run_pretraining.py \
+    run_pretraining.py \
     $PHASE2 \
     --do_train \
     --skip_checkpoint \
@@ -126,14 +167,14 @@ BERT_CMD="\
     --weight_decay_rate=${WEIGHT_DECAY_RATE} \
     --max_samples_termination=${MAX_SAMPLES_TERMINATION} \
     --eval_iter_start_samples=${EVAL_ITER_START_SAMPLES} --eval_iter_samples=${EVAL_ITER_SAMPLES} \
-    --eval_batch_size=16 --eval_dir=/workspace/evaldata --num_eval_examples 10000 \
+    --eval_batch_size=16 --eval_dir=/mlpbert/training/ --num_eval_examples 10000 \
     --cache_eval_data \
-    --output_dir=/results \
+    --output_dir=./results \
     --fp16 --fused_bias_fc --fused_bias_mha --fused_dropout_add \
     --distributed_lamb --dwu-num-rs-pg=1 --dwu-num-ar-pg=1 --dwu-num-ag-pg=1 --dwu-num-blocks=1 \
     --gradient_accumulation_steps=${GRADIENT_STEPS} \
     --log_freq=0 \
-    --bert_config_path=/workspace/phase1/bert_config.json "
+    --bert_config_path=/mlpbert/phase1/bert_config.json "
 
 if [ -n "${SLURM_LOCALID-}" ]; then
   BERT_CMD="${BERT_CMD} --local_rank=${SLURM_LOCALID} "

@@ -38,6 +38,8 @@ import random
 import re
 import time
 
+from microbench.extractor.patching_hook import prepare_model_and_input_dump_at_step
+
 from collections import OrderedDict
 from concurrent.futures import ProcessPoolExecutor
 #from modeling import BertForPretraining, BertConfig
@@ -811,11 +813,13 @@ def prepare_model_and_optimizer(args, device, stream):
             if prev is not None and (prev.data_ptr() + prev.numel() * prev.element_size() != p.data_ptr()):
                 p_offset = ((p_offset + 63) // 64) * 64
             prev = p
-        for i in range(24):
-            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
-            model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
-            size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
-            model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
+
+        if args.unpad_fmha is True or args.pad_fmha is True:
+            for i in range(24):
+                size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.size()
+                model.bert_model_segment.bert.encoder.layer[i].attention.self.Wqkv.set_(source=param_storage, storage_offset=buffer_w_offsets[i], size=size_tmp)
+                size_tmp = model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.size()
+                model.bert_model_segment.bert.encoder.layer[i].attention.self.Bqkv.set_(source=param_storage, storage_offset=buffer_b_offsets[i], size=size_tmp)
         model.load_state_dict(checkpoint_remapped, strict=True)
 #        loss, _, _ = model(*batch_gpu_placeholder)
 #        optimizer._lazy_init_stage1()
@@ -1364,7 +1368,7 @@ def main():
                     if p.requires_grad:
                         p.grad = None
                 #torch.cuda.nvtx.range_pop()
-            model.bert_model_segment.register_forward_hook(grads_to_none_hook)
+            #model.bert_model_segment.register_forward_hook(grads_to_none_hook)
 
 
         mlperf_logger.log_end(key=mlperf_logger.constants.INIT_STOP, sync=False)
@@ -1508,11 +1512,26 @@ def main():
                         loss = loss_train
 
                     if args.cuda_graph_mode=='segmented' or not use_cuda_graph:
+                        for p in model.parameters():
+                            if p.requires_grad:
+                                p.grad = None
+
                         loss, mlm_acc, sbridge = fwd_loss_bwd_trainer.step(step,
                                                                   batch,
                                                                   model,
                                                                   optimizer,
                                                                   sbridge, time_tags, nvtx_flag)
+
+                        if utils.is_main_process():
+                            print(f'step: {step}, loss: {loss}, grad_scaler.get_scale(): {grad_scaler.get_scale()}')
+                        if step == 100:
+                            raise ValueError('Stop by inteintion')
+
+                        if utils.is_main_process() and step == 99:
+                            prepare_model_and_input_dump_at_step(model, 'MLPERF_BERT', 100, "/tmp/")
+
+                    # continue
+
                     divisor = args.gradient_accumulation_steps
                     if args.log_freq>0:
                         average_loss += loss.item()
