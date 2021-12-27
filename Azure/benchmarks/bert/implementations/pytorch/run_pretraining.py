@@ -1528,7 +1528,7 @@ def main():
                             raise ValueError('Stop by inteintion')
 
                         if utils.is_main_process() and step == 99:
-                            prepare_model_and_input_dump_at_step(model, 'MLPERF_BERT', 100, "/tmp/")
+                            prepare_model_and_input_dump_at_step(model, 'MLPERF_BERT_no_dense_seq', 100, "/tmp/")
 
                     # continue
 

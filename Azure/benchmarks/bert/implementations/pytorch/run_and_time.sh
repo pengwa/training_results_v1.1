@@ -40,8 +40,8 @@ export START_WARMUP_STEP=0
 export WARMUP_PROPORTION=0.0
 
 
-# export EXTRA_PARAMS="--exchange_padding"
-export EXTRA_PARAMS="--dense_seq_output --exchange_padding"
+export EXTRA_PARAMS="--exchange_padding"
+# export EXTRA_PARAMS="--dense_seq_output --exchange_padding"
 # export EXTRA_PARAMS="--dense_seq_output --unpad --exchange_padding"
 #export EXTRA_PARAMS="--dense_seq_output --unpad --unpad_fmha --exchange_padding" ## unpad_fmha requires A100
 export PHASE=2
